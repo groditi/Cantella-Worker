@@ -1,2 +1,7 @@
+0.002000 2010-03-08 21:00EST
+ - Added program_name support
+ - Make workers shutdown gracefully if the parent unexpectedly exits
+ - Add priority, worker_detaches, worker_priority and worker_sets_process_group
+ - Add new POD section about worker-manager communication
 0.001000 2010-03-02 19:00EST
  - Initial release
