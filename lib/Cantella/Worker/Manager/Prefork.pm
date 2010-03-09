@@ -3,6 +3,7 @@ package Cantella::Worker::Manager::Prefork;
 use Moose;
 use POE qw( Wheel::Run );
 use Data::GUID;
+use MooseX::Types::Common::String qw/NonEmptySimpleStr/;
 use MooseX::Types::Log::Dispatch qw(Logger);
 use Cantella::Worker::Types qw/WorkerClassName/;
 
@@ -16,6 +17,12 @@ has logger => (
   default => sub {
     Log::Dispatch->new(outputs => [ ['Null', min_level => 'debug' ] ]);
   }
+);
+
+has program_name => (
+  is => 'ro',
+  isa => NonEmptySimpleStr,
+  predicate => 'has_program_name',
 );
 
 has worker_class => (
@@ -57,6 +64,27 @@ has close_on_call => (
   isa => 'Bool',
   required => 1,
   default => sub { 1 },
+);
+
+has worker_detaches => (
+  is => 'rw',
+  isa => 'Bool',
+  required => 1,
+  default => sub { 1 },
+);
+
+has worker_sets_process_group => (
+  is => 'rw',
+  isa => 'Bool',
+  required => 1,
+  default => sub { 0 },
+);
+
+has worker_priority => (
+  is => 'rw',
+  isa => 'Int',
+  required => 1,
+  default => sub { 0 },
 );
 
 has pid_to_wheel_map => (
@@ -153,6 +181,11 @@ sub signal_workers {
 }
 
 sub start {
+  my $self = shift;
+  if( $self->has_program_name ){
+    my $name = join('-', $self->program_name, 'pm');
+    $0 = $name;
+  }
   $poe_kernel->run;
 }
 
@@ -183,10 +216,35 @@ sub _spawn_workers {
       Program => sub {
         $poe_kernel->stop();
 
-        $class->new( @_ );
+        my $instance = $class->new( @_ );
+        if( $self->has_program_name ){
+          my $name = $self->program_name;
+          $0 = $name;
+        }
+        POE::Session->create(
+          inline_states => {
+            _start => sub {
+              $poe_kernel->select_read(\*STDIN, 'stdin_ready');
+            },
+            stdin_ready => sub {
+              my $buffer;
+              my $status = sysread(\*STDIN, $buffer, 1);
+              if( not defined($status) ){
+                $instance->logger->error("Error reading STDIN: $!");
+              } elsif($status == 0){
+                $instance->logger->error("Manager process unexpectedly died. Shutting down worker.");
+                $poe_kernel->select_read(\*STDIN);
+                $poe_kernel->signal($poe_kernel, 'TERM');
+              }
+            },
+          }
+        );
 
-        $class->start;
+        $instance->start;
       },
+      Priority => $self->worker_priority,
+      NoSetSid => !$self->worker_detaches,
+      NoSetPgrp => !$self->worker_sets_process_group,
       ProgramArgs => [ $self->worker_args ],
       CloseOnCall => $self->close_on_call,
       StdoutEvent => 'worker_process_stdout',
@@ -322,6 +380,32 @@ Cantella::Worker::Manager::Prefork - Preforking POE worker-pool manager
 
     $manager->start;
 
+=head1 MANAGER-WORKER COMMUNICATION
+
+=head2 Signals
+
+Great care has been taken to provide with basic means of communication
+between a manager and its workers. The manager process will pass-on C<INT>,
+C<TERM>, C<USR1> and C<USR2> signals to it's workers, which means that you only
+need to worry about interacting with one process.
+
+=head2 IO Handles
+
+To communicate with the manager, workers can write to C<STDOUT> and C<STDERR>,
+which the manager will log at the levels of C<worker_stderr_log_level> and
+C<worker_stdout_log_level>. Currently the worker process' C<STDIN> is reserved
+for internal communications, but this may change in the future.
+
+=head2 Process Management
+
+At start and resume time, as well as when a C<CHLD> signal is received,
+the manager process will check the number of workers and spawn new ones,
+if appropriate. This way, even if a worker unexpectedly dies, it will be
+promptly replaced. If workers have detached themselves from the manager
+session, they will outlive their manager, so if they detect the manager has
+unexpectedly exited, they will signal themselves with a C<TERM> signal and
+shut down gracefully to avoid unsupervised processes.
+
 =head1 ATTRIBUTES
 
 =head2 logger
@@ -335,6 +419,20 @@ Cantella::Worker::Manager::Prefork - Preforking POE worker-pool manager
 Read-only L<Log::Dispatch> instance. Defaults to a device that logs
 to Null. This attribute can coerce from a hash or array reference, see
 L<MooseX::Types::Log::Dispatch> for details.
+
+=head2 program_name
+
+=over 4
+
+=item B<program_name> - reader
+
+=item B<has_program_name> - predicate
+
+=back
+
+Read-only non-blank string. If C<program_name> set, the manager process will
+be renamed to "${program_name}-pm" and the children to "${program_name}".
+Please see C<$0> in L<perlvar> for more information.
 
 =head2 worker_class
 
@@ -408,6 +506,42 @@ default to a UUID string by default.
 
 Read-write boolean value option for declaring whether file descriptors should
 be closed in the forked process. Defaults to true.
+
+=head2 worker_detaches
+
+=over 4
+
+=item B<worker_detches> - accessor
+
+=back
+
+Read-write boolean value option for declaring whether worker processes should
+C<setsid()> to detach themselves from the manager's session. Defaults to true.
+
+=head2 worker_sets_process_group
+
+=over 4
+
+=item B<worker_sets_process_group> - accessor
+
+=back
+
+Read-write boolean value option for declaring whether worker processes should
+C<setpgrp()> to match the process group of the parent process. Defaults to true.
+
+=head2 worker_priority
+
+=over 4
+
+=item B<worker_priority> - accessor
+
+=back
+
+Read-write integer. The priority or niceness that should be given to children
+processes expressed as a I<delta> of the parent's. For example, to give a
+worker process a lesser priority, use C<1>. To escalate the priority use a
+negative number. UNIX operating systems require elevated privileges to do this.
+Defaults to C<0>.
 
 =head2 pid_to_wheel_map
 
@@ -723,7 +857,7 @@ The shutdown event can be triggered sending signal C<INT> or C<TERM>
 =over 4
 
 =item B<_keep_alive> - Used to keep the session alive while paused. Does nothing
-other than schedule the next keep alive 1000 seconds away.
+other than schedule the next keep alive_1000 seconds away.
 
 =item B<sig_int> - mark sig INT as handled and yield to C<shutdown>
 
