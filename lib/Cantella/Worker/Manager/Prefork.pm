@@ -225,7 +225,10 @@ sub _spawn_workers {
           inline_states => {
             _start => sub {
               $poe_kernel->select_read(\*STDIN, 'stdin_ready');
+              $poe_kernel->sig('TERM', 'stop_polling');
+              $poe_kernel->sig('INT', 'stop_polling');
             },
+            stop_polling => sub { $poe_kernel->select_read(\*STDIN); },
             stdin_ready => sub {
               my $buffer;
               my $status = sysread(\*STDIN, $buffer, 1);
