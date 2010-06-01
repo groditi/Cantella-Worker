@@ -5,7 +5,8 @@ use POE;
 use MooseX::Types::Log::Dispatch qw(Logger);
 use Data::GUID;
 
-our $VERSION = '0.001000';
+our $VERSION = '0.001001';
+$VERSION = eval $VERSION;
 
 requires qw/get_work work/;
 

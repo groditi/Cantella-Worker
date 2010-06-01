@@ -4,7 +4,8 @@ use MooseX::Types -declare => [
   'WorkerClassName'
 ];
 
-our $VERSION = '0.001000';
+our $VERSION = '0.001001';
+$VERSION = eval $VERSION;
 
 use MooseX::Types::Moose qw/ClassName/;
 use Moose::Util qw/does_role/;

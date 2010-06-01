@@ -1,3 +1,6 @@
+0.002002 2010-06-01 12:00EST
+ - $VERSION = eval $VERSION;
+ - add MooseX::Types::Common as a dep
 0.002001 2010-03-08 21:30EST
  - Bug where the poll on STDIN wasnt being removed
 0.002000 2010-03-08 21:00EST

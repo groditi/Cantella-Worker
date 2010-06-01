@@ -7,7 +7,8 @@ use MooseX::Types::Common::String qw/NonEmptySimpleStr/;
 use MooseX::Types::Log::Dispatch qw(Logger);
 use Cantella::Worker::Types qw/WorkerClassName/;
 
-our $VERSION = '0.002001';
+our $VERSION = '0.002002';
+$VERSION = eval $VERSION;
 
 has logger => (
   is => 'ro',
